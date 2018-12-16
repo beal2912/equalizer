@@ -88,6 +88,16 @@ class OrderBook(object):
                                                 self.book[Trade.WAY_BUY][i].get_quote_amount())
         return string
 
+    def get_best_offer(self,way):
+        """
+        Return best offer BUY or SELL
+        :return: offer book as string
+        """
+        if way=="BUY":
+            return self.book[Trade.WAY_BUY][0].get_price()
+        elif way=="SELL":
+            return self.book[Trade.WAY_SELL][len(self.book[Trade.WAY_SELL])-1].get_price()
+
     def sum_up(self):
         """Sums each offer up
         :return: None

@@ -2,7 +2,7 @@
 
 class Token(object):
 
-    def __init__(self, name, decimals, hash):
+    def __init__(self, name, decimals, hash,minimum_quantity):
         """
         Creates a token
         :param name: name of the token
@@ -12,6 +12,7 @@ class Token(object):
         self.name = name
         self.decimals = decimals
         self.hash = hash
+        self.minimum_quantity = minimum_quantity
         self.balance = 0
         self.volume = 0
 
@@ -32,6 +33,12 @@ class Token(object):
         :return: hash
         """
         return self.hash
+
+    def get_minimum_quantity(self):
+        """
+        :return: minimum_quantity
+        """
+        return self.minimum_quantity
 
     def set_balance(self, balance):
         """

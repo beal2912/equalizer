@@ -21,7 +21,7 @@ class EqualizerUpdater(object):
     def __init__(self, request_pairs, rps=10):
         self.rps = rps
         self.request = request_pairs
-        self.counter = 1
+        self.counter = 0
         self.last_request = 0
         self.stop_threads = True
         self.request_thread = []
@@ -39,7 +39,7 @@ class EqualizerUpdater(object):
         for i in range(0, self.rps):
             self.request_thread = self.request_thread + [threading.Thread(target=self.load_data)]
             self.request_thread[i].start()
-            time.sleep(0.1)
+            time.sleep(0.2)
 
     '''
         Sets a flag so each thread will stop next loop
@@ -73,14 +73,14 @@ class EqualizerUpdater(object):
 
             self.last_request = time.time()
 
-            pair = self.request[self.counter-1]
-
-            pair.update()
+            equalizer = self.request[self.counter]
+            if equalizer.must_update():
+                equalizer.update()
 
             self.counter = self.counter + 1
 
-            if self.counter > len(self.request):
+            if self.counter > (len(self.request)-1):
                 self.finished = True
-                self.counter = 1
+                self.counter = 0
 
 

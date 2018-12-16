@@ -4,10 +4,11 @@ author: Devel484
 import API.api_request as request
 from API.contract import Contract
 from API.token import Token
-from API.pair import Pair
+from Class.pair import Pair
 from API.trade import Trade
-from API.candlestick import Candlestick
-import API.log
+
+import API.log as log
+
 from switcheo.authenticated_client import AuthenticatedClient
 from neocore.KeyPair import KeyPair
 from switcheo.neo.utils import neo_get_scripthash_from_private_key
@@ -28,7 +29,7 @@ class Switcheo(object):
 
     API_NET = None
 
-    def __init__(self, api_net=MAIN_NET, fees=0.0015, private_key=None, fee_token_name=None, discount=0.5):
+    def __init__(self, api_net=MAIN_NET, fees=0.0015, fixed_fee=77000000, private_key=None, fee_token_name=None, discount=0.25):
         """
         Create new Switcheo exchange with url, fee rate and private key
         :param api_net:
@@ -40,6 +41,7 @@ class Switcheo(object):
         self.pairs = []
         self.contracts = []
         self.fees = fees
+        self.fixed_fee = fixed_fee
         self.fee_token_name = fee_token_name
         self.fee_token = None
         self.key_pair = None
@@ -47,7 +49,7 @@ class Switcheo(object):
         self.client = AuthenticatedClient(api_url=self.url)
         if private_key:
             try:
-                self.key_pair = KeyPair(bytes.fromhex(private_key))
+                self.key_pair = KeyPair(private_key)
             except:
                 self.key_pair = None
                 print("No or incorrect private key. Equalizer changes to view only mode")
@@ -57,14 +59,21 @@ class Switcheo(object):
         Initialise exchange by loading some data.
         :return: None
         """
+        log.log("log.txt", "Initialize ----------------")
+        log.log("log.txt", "Load contract--------------")
         self.load_contracts()
+        log.log("log.txt", "Load Tokens----------------")
         self.load_tokens()
+        log.log("log.txt", "Load Pairs-----------------")
         self.load_pairs()
+        log.log("log.txt", "Load Last price------------")
         self.load_last_prices()
-        self.load_24_hours()
+        log.log("log.txt", "Load Balance---------------")
         self.load_balances()
+
         if self.fee_token_name:
             self.fee_token = self.get_token(self.fee_token_name)
+
 
     @staticmethod
     def get_minimum_amount(token):
@@ -74,10 +83,10 @@ class Switcheo(object):
         :return:
         """
         if token.get_name() == "NEO":
-            return 0.01 * pow(10, 8)
+            return 0.1 * pow(10, 8)
 
         if token.get_name() == "GAS":
-            return 0.1 * pow(10, 8)
+            return 0.2 * pow(10, 8)
 
         return 1 * pow(10, token.get_decimals())
 
@@ -114,10 +123,14 @@ class Switcheo(object):
         """
         raw_contracts = request.public_request(self.url, "/v2/exchange/contracts")
         if not raw_contracts:
+            log.log("log.txt", "Error loading Contract - no data")
             return
         self.contracts = []
+        i=0
         for key in raw_contracts:
             self.contracts.append(Contract(key, raw_contracts[key]))
+            i=i+1
+        log.log("log.txt", "%d contracts loaded" % (i))
         return self.contracts
 
     def get_contracts(self):
@@ -144,10 +157,19 @@ class Switcheo(object):
         """
         raw_tokens = request.public_request(self.url, "/v2/exchange/tokens")
         if not raw_tokens:
+            log.log("log.txt", "Error loading Token - no data")
             return
         self.tokens = []
+        i = 0
         for key in raw_tokens:
-            self.tokens.append(Token(key, raw_tokens[key]["decimals"], raw_tokens[key]["hash"]))
+            if raw_tokens[key]["trading_active"]:
+                self.tokens.append(Token(key, raw_tokens[key]["decimals"], raw_tokens[key]["hash"], raw_tokens[key]["minimum_quantity"]))
+                log.log("log.txt", "%s loaded - minimum is %s" % (key,raw_tokens[key]["minimum_quantity"]))
+                i = i + 1
+            else:
+                log.log("log.txt", "%s not loaded" % (key))
+
+        log.log("log.txt", "%d tokens loaded" % (i))
         return self.tokens
 
     def get_tokens(self):
@@ -177,8 +199,10 @@ class Switcheo(object):
             params = {"bases": bases}
         raw_pairs = request.public_request(self.url, "/v2/exchange/pairs", params)
         if not raw_pairs:
+            log.log("log.txt", "Error loading Pairs - no data")
             return
         self.pairs = []
+        i = 0
         for val in raw_pairs:
             quote, base = val.split("_")
             quote_token = self.get_token(quote)
@@ -186,6 +210,10 @@ class Switcheo(object):
             if not quote_token or not base_token:
                 continue
             self.pairs.append(Pair(self, quote_token, base_token))
+            log.log("log.txt", "%s loaded" % (val))
+            i = i + 1
+
+        log.log("log.txt", "%d Pairs loaded" % (i))
         return self.pairs
 
     def get_pairs(self):
@@ -218,32 +246,6 @@ class Switcheo(object):
         pair = self.get_pair(token2.get_name()+"_"+token1.get_name())
         return pair
 
-    def load_24_hours(self):
-        """
-        Load 24h candlestick for each pair
-        :return: list of objects
-        """
-        raw_candles = request.public_request(self.get_url(), "/v2/tickers/last_24_hours")
-        if not raw_candles:
-            return
-        candlesticks = []
-        timestamp = time.time() - 1*60*60*24
-        for token in self.tokens:
-            token.set_volume(0)
-        for entry in raw_candles:
-            pair = self.get_pair(entry["pair"])
-            if not pair:
-                continue
-            candlestick = Candlestick(pair, timestamp, float(entry["open"]),
-                                      float(entry["close"]), float(entry["high"]), float(entry["low"]),
-                                      float(entry["volume"]), float(entry["quote_volume"]),
-                                      Candlestick.INTERVAL_MIN_1440)
-            candlesticks.append(candlestick)
-            pair.set_candlestick_24h(candlestick)
-            pair.get_base_token().add_volume(candlestick.get_base_volume())
-            pair.get_quote_token().add_volume(candlestick.get_quote_volume())
-        return candlesticks
-
     def load_last_prices(self):
         """
         Load price of each pair
@@ -258,7 +260,6 @@ class Switcheo(object):
                 if not pair:
                     continue
                 pair.set_last_price(float(prices[quote][base]))
-
         return prices
 
     def load_balances(self):
@@ -267,6 +268,7 @@ class Switcheo(object):
         :return: balances
         """
         if self.get_key_pair() is None:
+            log.log("log.txt", "No Pair Loaded")
             return []
         params = {
             "addresses": neo_get_scripthash_from_private_key(self.key_pair.PrivateKey),
@@ -275,14 +277,18 @@ class Switcheo(object):
 
         raw_balances = request.public_request(self.get_url(), "/v2/balances", params)
         if not raw_balances:
+            log.log("log.txt", "No balance Pair")
             return
+
         for token in self.tokens:
             token.set_balance(0)
 
         for name in raw_balances["confirmed"]:
             token = self.get_token(name)
             token.set_balance(int(float(raw_balances["confirmed"][name])))
+            #log.log("log.txt", "%s=%d" % (name,int(float(raw_balances["confirmed"][name]))))
         return raw_balances
+
 
     def load_orders(self, pair=None):
         """
@@ -435,34 +441,37 @@ class Switcheo(object):
             try:
                 want_amount = (trade.get_want() * pow(0.999, i))/pow(10, 8)
 
-                order_details = self.client.create_order(self.key_pair, trade.get_pair().get_symbol(),
-                                                         trade.get_trade_way_as_string().lower(), price, want_amount, True)
+                order_details = self.client.create_order(private_key=self.key_pair, pair=str(trade.get_pair().get_symbol()),
+                                                         side=str(trade.get_trade_way_as_string().lower()), price=price, amount=want_amount, use_native_token=True)
+
                 if order_details:
                     trades = self.order_to_trades(order_details)
-                    API.log.log("send_order.txt", "Virtual order:")
-                    API.log.log("send_order.txt", trade)
-                    API.log.log("send_order.txt", "Create order:")
+                    log.log("send_order.txt", "Virtual order:")
+                    log.log("send_order.txt", trade)
+                    log.log("send_order.txt", "Create order:")
                     for t in trades:
-                        API.log.log("send_order.txt", t)
+                        log.log("send_order.txt", t)
 
                     details = self.client.execute_order(order_details, self.key_pair)
                     trades = self.order_to_trades(details)
-                    API.log.log("send_order.txt", "Execute order(s)")
+                    log.log("send_order.txt", "Execute order(s)")
                     for t in trades:
-                        API.log.log_and_print("send_order.txt", t)
+                        log.log_and_print("send_order.txt", t)
                     break
 
             except HTTPError as e:
-                API.log.log("send_order.txt", "[%s]:(%s):%s" % (e.response.status_code, e.response.url,
+                log.log("send_order.txt", "[%s]:(%s):%s" % (e.response.status_code, e.response.url,
                                                                  e.response.text))
                 continue
 
+
+
         if not order_details:
-            API.log.log_and_print("execute.txt", "Not possible to get valid order details for pair: %s" % trade.get_pair().get_symbol())
+            log.log_and_print("execute.txt", "Not possible to get valid order details for pair: %s" % trade.get_pair().get_symbol())
             return
 
         if not details:
-            API.log.log_and_print("execute.txt", "Not possible to get valid executing order details for pair: %s" % trade.get_pair().get_symbol())
+            log.log_and_print("execute.txt", "Not possible to get valid executing order details for pair: %s" % trade.get_pair().get_symbol())
 
         return trades
 
@@ -484,31 +493,41 @@ class Switcheo(object):
         :param trade: trade
         :return: None
         """
-        non_native_fee_token = trade.get_pair().get_quote_token()
-        non_native_fee_amount = trade.get_amount_quote() * self.get_fees()
-        if trade.get_way() == Trade.WAY_SELL:
-            non_native_fee_token = trade.get_pair().get_base_token()
-            non_native_fee_amount = trade.get_amount_base() * self.get_fees()
 
-        if trade.get_fee_token() == self.get_fee_token():
-            neo_token = self.get_token("NEO")
-            neo_to_non_native = self.get_pair_by_tokens(non_native_fee_token, neo_token)
-            neo_to_fee_token = self.get_pair_by_tokens(neo_token, self.get_fee_token())
-            if non_native_fee_token != self.get_fee_token():
-                if neo_to_non_native:
-                    non_native_fee_amount = non_native_fee_amount * neo_to_non_native.get_last_price()
-                if neo_to_non_native != neo_to_fee_token:
-                    non_native_fee_amount = non_native_fee_amount / neo_to_fee_token.get_last_price()
+        # calculate fixed fee
+        fixed_amount = 0
+        neo_token = self.get_token("NEO")
+        neo_to_fee_token = self.get_pair_by_tokens(neo_token, self.get_fee_token())
 
-            """non_native_to_fee_token = self.get_pair_by_tokens(non_native_fee_token, self.get_fee_token())
-            if non_native_to_fee_token:
-                non_native_fee_amount = non_native_fee_amount / non_native_to_fee_token.get_last_price()"""
-
-            native_fee_amount = int(non_native_fee_amount * self.discount)
-            trade.set_fees(native_fee_amount)
+        if neo_to_fee_token:
+            fixed_amount = self.fixed_fee * neo_to_fee_token.get_last_price()
+            log.log("log.txt", "neo fixed amount %16.8f = %16.8f * %16.8f" % (fixed_amount, self.fixed_fee,neo_to_fee_token.get_last_price()))
 
         else:
-            trade.set_fees(int(non_native_fee_amount))
+            log.log("error.txt","Unable to calculate fixed fee amount")
+
+
+        # calculate neo value of trade
+        neo_amount = trade.get_neo_value()
+
+        # if we use native token for fee
+        if trade.get_fee_token() == self.get_fee_token():
+            # SWTH
+            neo_fee_amount = ( neo_amount * self.get_fees() )
+            swth_fee_amount= neo_fee_amount / neo_to_fee_token.get_last_price() + self.fixed_fee
+            native_fee_amount = float(swth_fee_amount * (1+self.discount-self.discount))
+            trade.set_fees(native_fee_amount)
+        # else calculate fee with base token
+        else:
+            if neo_token == trade.get_pair().get_base_token():
+                neo_fee_amount = (neo_amount * self.get_fees()) + fixed_amount
+                trade.set_fees(float(neo_fee_amount))
+            else:
+                # manque l'ajout des fixed base fees
+                base_fee_amount = trade.get_amount_base() * self.get_fees()
+                trade.set_fees(float(base_fee_amount))
+
+
 
 
 

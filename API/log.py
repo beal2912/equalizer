@@ -9,12 +9,12 @@ def log(filename, text):
     :param text: text
     :return: None
     """
-    path = "logs/mainnet/"
+    path = "logs/"
     if not os.path.isdir("logs/"):
         os.makedirs("logs/")
 
-    if not os.path.isdir("logs/mainnet/"):
-        os.makedirs("logs/mainnet/")
+    if not os.path.isdir("logs/"):
+        os.makedirs("logs/")
 
     f = open(path+filename, "a")
     f.write(time.strftime('[%Y-%m-%d %H:%M:%S]:', time.localtime(time.time()))+str(text)+"\n")
